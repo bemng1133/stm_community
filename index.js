@@ -314,16 +314,16 @@ SteamCommunity.prototype.loggedIn = function(callback) {
 		"followRedirect": false,
 		"checkHttpError": false
 	}, function(err, response, body) {
-		if(err || (response.statusCode != 302 && response.statusCode != 403)) {
+		if(err || (response.statusCode != 302 && response.statusCode != 403 && response.statusCode != 200)) {
 			callback(err || new Error("HTTP error " + response.statusCode));
 			return;
 		}
-
+		// console.log(err,response.statusCode,response.headers)
+		
 		if(response.statusCode == 403) {
 			callback(null, true, true);
 			return;
 		}
-
 		callback(null, !!response.headers.location.match(/steamcommunity\.com(\/(id|profiles)\/[^\/]+)\/?/), false);
 	}, "steamcommunity");
 };

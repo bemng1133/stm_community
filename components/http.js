@@ -74,8 +74,8 @@ SteamCommunity.prototype.httpRequest = async function (uri, options, callback, s
 		if (self._useCycleTLS) {
 			try {
 				let cycleTLSUrl = options.url || uri;
-				if (cycleTLSUrl.startsWith('https://')) {
-					cycleTLSUrl = `http://${cycleTLSUrl.substr(8)}`;
+				if (cycleTLSUrl.startsWith('https://steamcommunity.com')) {
+					cycleTLSUrl = cycleTLSUrl.replace('https://', 'http://');
 				}
 
 				const cycleTLSOptions = {
@@ -85,6 +85,7 @@ SteamCommunity.prototype.httpRequest = async function (uri, options, callback, s
 					method: options.method || 'get',
 					body: options.body || '',
 					headers: options.headers || {},
+					// disableRedirect: options.followRedirect === false
 				};
 
 				// Get cookies for all Steam domains
@@ -126,7 +127,9 @@ SteamCommunity.prototype.httpRequest = async function (uri, options, callback, s
 					}
 				}
 
-
+				// console.log(responseBody)
+				response.headers.location = response.finalUrl
+				// console.log(response)
 				handleResponse(null, { statusCode: response.status, headers: response.headers }, responseBody);
 			} catch (error) {
 				handleResponse(error);
