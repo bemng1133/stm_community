@@ -11,7 +11,7 @@ let g_AbortPromptFunc = null;
 
 let community = new SteamCommunity();
 
-main();
+// main();
 async function main() {
 	let accountName = await promptAsync('Username: ');
 	let password = await promptAsync('Password (hidden): ', true);

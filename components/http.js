@@ -1,6 +1,6 @@
-var SteamCommunity = require('../index.js');
+const SteamCommunity = require('../index.js');
 
-SteamCommunity.prototype.httpRequest = function(uri, options, callback, source) {
+SteamCommunity.prototype.httpRequest = async function (uri, options, callback, source) {
 	if (typeof uri === 'object') {
 		source = callback;
 		callback = options;
@@ -30,7 +30,31 @@ SteamCommunity.prototype.httpRequest = function(uri, options, callback, source) 
 		continueRequest(null);
 	}
 
-	function continueRequest(err) {
+	function handleResponse(err, response, body) {
+		let hasCallback = !!callback;
+		let httpError = options.checkHttpError !== false && self._checkHttpError(err, response, callback, body);
+		let communityError = !options.json && options.checkCommunityError !== false && self._checkCommunityError(body, httpError ? function () { } : callback);
+		let tradeError = !options.json && options.checkTradeError !== false && self._checkTradeError(body, httpError || communityError ? function () { } : callback);
+		let jsonError = options.json && options.checkJsonError !== false && !body ? new Error("Malformed JSON response") : null;
+
+		self.emit('postHttpRequest', requestID, source, options, httpError || communityError || tradeError || jsonError || null, response, body, {
+			"hasCallback": hasCallback,
+			"httpError": httpError,
+			"communityError": communityError,
+			"tradeError": tradeError,
+			"jsonError": jsonError
+		});
+
+		if (hasCallback && !(httpError || communityError || tradeError)) {
+			if (jsonError) {
+				callback.call(self, jsonError, response);
+			} else {
+				callback.apply(self, arguments);
+			}
+		}
+	}
+
+	async function continueRequest(err) {
 		if (continued) {
 			return;
 		}
@@ -45,47 +69,106 @@ SteamCommunity.prototype.httpRequest = function(uri, options, callback, source) 
 			return;
 		}
 
-		self.request(options, function (err, response, body) {
-			var hasCallback = !!callback;
-			var httpError = options.checkHttpError !== false && self._checkHttpError(err, response, callback, body);
-			var communityError = !options.json && options.checkCommunityError !== false && self._checkCommunityError(body, httpError ? function () {} : callback); // don't fire the callback if hasHttpError did it already
-			var tradeError = !options.json && options.checkTradeError !== false && self._checkTradeError(body, httpError || communityError ? function () {} : callback); // don't fire the callback if either of the previous already did
-			var jsonError = options.json && options.checkJsonError !== false && !body ? new Error("Malformed JSON response") : null;
 
-			self.emit('postHttpRequest', requestID, source, options, httpError || communityError || tradeError || jsonError || null, response, body, {
-				"hasCallback": hasCallback,
-				"httpError": httpError,
-				"communityError": communityError,
-				"tradeError": tradeError,
-				"jsonError": jsonError
-			});
 
-			if (hasCallback && !(httpError || communityError || tradeError)) {
-				if (jsonError) {
-					callback.call(self, jsonError, response);
-				} else {
-					callback.apply(self, arguments);
+		if (self._useCycleTLS) {
+			try {
+				const cycleTLSOptions = {
+					...self._cycleTLSOptions,
+					...options,
+					url: uri,
+					method: options.method || 'get',
+					body: options.body || '',
+					headers: options.headers || {},
+				};
+
+				// Get cookies for all Steam domains
+				const cookieObj = await self._getCookiesForSteamDomains(uri);
+
+				if (Object.keys(cookieObj).length > 0) {
+					cycleTLSOptions.cookies = cookieObj;
 				}
+
+				// If cookies were sent in headers, merge them
+				if (cycleTLSOptions.headers.cookie) {
+					const headerCookies = cycleTLSOptions.headers.cookie.split('; ').reduce((acc, cur) => {
+						const [key, value] = cur.split('=');
+						acc[key] = value;
+						return acc;
+					}, {});
+					cycleTLSOptions.cookies = { ...cycleTLSOptions.cookies, ...headerCookies };
+					cycleTLSOptions.headers.cookie = undefined;
+				}
+
+				// Wait for CycleTLS to initialize
+                await self._cycleTLSInitPromise;//todo remove this
+				// console.log(cycleTLSOptions)
+				console.log('making req')
+				const response = await self._cycleTLS(cycleTLSOptions.url, cycleTLSOptions, cycleTLSOptions.method);
+				console.log('req made')
+				// Update jar with any new cookies from the response
+				await self._updateJarFromCycleTLSResponse(response, uri);
+
+				handleResponse(null, { statusCode: response.status, headers: response.headers }, response.body);
+			} catch (error) {
+				handleResponse(error);
 			}
-		});
+		} else {
+			self.request(options, handleResponse);
+		}
+
+	}
+}
+
+SteamCommunity.prototype._updateJarFromCycleTLSResponse = async function (response, uri) {
+	if (response.headers['set-cookie']) {
+		const cookies = Array.isArray(response.headers['set-cookie'])
+			? response.headers['set-cookie']
+			: [response.headers['set-cookie']];
+
+		for (const cookieString of cookies) {
+			const cookie = Request.cookie(cookieString);
+			await this._setCookie(cookie, cookie.secure);
+		}
 	}
 };
 
-SteamCommunity.prototype.httpRequestGet = function() {
+SteamCommunity.prototype._getCookiesForSteamDomains = async function(uri) {
+    const steamDomains = [
+        'steamcommunity.com',
+        'store.steampowered.com',
+        'help.steampowered.com'
+    ];
+
+    let cookieObj = {};
+
+    for (const domain of steamDomains) {
+        const url = new URL(uri);
+        url.hostname = domain;
+        const cookies = await this._jar.getCookies(url.toString());
+        cookies.forEach(cookie => {
+            cookieObj[cookie.key] = cookie.value;
+        });
+    }
+
+    return cookieObj;
+};
+
+SteamCommunity.prototype.httpRequestGet = function () {
 	this._httpRequestConvenienceMethod = "GET";
 	return this.httpRequest.apply(this, arguments);
 };
 
-SteamCommunity.prototype.httpRequestPost = function() {
+SteamCommunity.prototype.httpRequestPost = function () {
 	this._httpRequestConvenienceMethod = "POST";
 	return this.httpRequest.apply(this, arguments);
 };
 
-SteamCommunity.prototype._notifySessionExpired = function(err) {
+SteamCommunity.prototype._notifySessionExpired = function (err) {
 	this.emit('sessionExpired', err);
 };
 
-SteamCommunity.prototype._checkHttpError = function(err, response, callback, body) {
+SteamCommunity.prototype._checkHttpError = function (err, response, callback, body) {
 	if (err) {
 		callback(err, response, body);
 		return err;
@@ -114,10 +197,10 @@ SteamCommunity.prototype._checkHttpError = function(err, response, callback, bod
 	return false;
 };
 
-SteamCommunity.prototype._checkCommunityError = function(html, callback) {
+SteamCommunity.prototype._checkCommunityError = function (html, callback) {
 	var err;
 
-	if(typeof html === 'string' && html.match(/<h1>Sorry!<\/h1>/)) {
+	if (typeof html === 'string' && html.match(/<h1>Sorry!<\/h1>/)) {
 		var match = html.match(/<h3>(.+)<\/h3>/);
 		err = new Error(match ? match[1] : "Unknown error occurred");
 		callback(err);
@@ -134,7 +217,7 @@ SteamCommunity.prototype._checkCommunityError = function(html, callback) {
 	return false;
 };
 
-SteamCommunity.prototype._checkTradeError = function(html, callback) {
+SteamCommunity.prototype._checkTradeError = function (html, callback) {
 	if (typeof html !== 'string') {
 		return false;
 	}

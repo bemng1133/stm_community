@@ -1,6 +1,8 @@
 const {chrome} = require('@doctormckay/user-agents');
 const Request = require('request');
 const SteamID = require('steamid');
+const tough = require('tough-cookie');
+const initCycleTLS = require('cycletls');
 
 const Helpers = require('./components/helpers.js');
 
@@ -23,12 +25,20 @@ function SteamCommunity(options) {
 	this._httpRequestID = 0;
 	this.chatState = SteamCommunity.ChatState.Offline;
 
+    this._useCycleTLS = !!options.useCycleTLS;
+    this._cycleTLSOptions = {
+        ja3: options.ja3 || '771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,17513-51-35-10-5-13-65037-65281-45-27-11-0-43-18-23-16,25497-29-23-24,0',
+        userAgent: options.userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+        // Add other CycleTLS options as needed
+    };
+
+
 	var defaults = {
 		"jar": this._jar,
 		"timeout": options.timeout || 50000,
 		"gzip": true,
 		"headers": {
-			"User-Agent": options.userAgent || chrome()
+			"User-Agent": this._cycleTLSOptions.userAgent || chrome()
 		}
 	};
 
@@ -51,7 +61,17 @@ function SteamCommunity(options) {
 
 	// UTC
 	this._setCookie(Request.cookie('timezoneOffset=0,0'));
+
+	// Initialize CycleTLS if needed
+    if (this._useCycleTLS) {
+        this._cycleTLSInitPromise = this._initCycleTLS();
+    }
 }
+
+SteamCommunity.prototype._initCycleTLS = async function() {
+    this._cycleTLS = await initCycleTLS();
+	console.log('inited')
+};
 
 SteamCommunity.prototype.login = function(details, callback) {
 	if (!details.accountName || !details.password) {
@@ -188,6 +208,7 @@ SteamCommunity.prototype.getSessionID = function(host = "http://steamcommunity.c
 	}
 
 	var sessionID = generateSessionID();
+	
 	this._setCookie(Request.cookie('sessionid=' + sessionID));
 	return sessionID;
 };
