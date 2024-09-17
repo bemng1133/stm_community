@@ -73,10 +73,15 @@ SteamCommunity.prototype.httpRequest = async function (uri, options, callback, s
 
 		if (self._useCycleTLS) {
 			try {
+				let cycleTLSUrl = options.url || uri;
+				if (cycleTLSUrl.startsWith('https://')) {
+					cycleTLSUrl = `http://${cycleTLSUrl.substr(8)}`;
+				}
+
 				const cycleTLSOptions = {
 					...self._cycleTLSOptions,
 					...options,
-					url: uri,
+					url: cycleTLSUrl,
 					method: options.method || 'get',
 					body: options.body || '',
 					headers: options.headers || {},
