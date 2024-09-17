@@ -101,7 +101,7 @@ SteamCommunity.prototype.httpRequest = async function (uri, options, callback, s
 				}
 
 				// Wait for CycleTLS to initialize
-                await self._cycleTLSInitPromise;//todo remove this
+				await self._cycleTLSInitPromise;//todo remove this
 				// console.log(cycleTLSOptions)
 				console.log('making req')
 				const response = await self._cycleTLS(cycleTLSOptions.url, cycleTLSOptions, cycleTLSOptions.method);
@@ -109,7 +109,20 @@ SteamCommunity.prototype.httpRequest = async function (uri, options, callback, s
 				// Update jar with any new cookies from the response
 				await self._updateJarFromCycleTLSResponse(response, uri);
 
-				handleResponse(null, { statusCode: response.status, headers: response.headers }, response.body);
+				// Handle JSON responses
+				let responseBody = response.body;
+				if (typeof responseBody === 'object' && responseBody !== null && !options.json) {
+					responseBody = JSON.stringify(responseBody);
+				} else if (options.json && typeof responseBody === 'string') {
+					try {
+						responseBody = JSON.parse(responseBody);
+					} catch (e) {
+						// If parsing fails, leave the body as is
+					}
+				}
+
+
+				handleResponse(null, { statusCode: response.status, headers: response.headers }, responseBody);
 			} catch (error) {
 				handleResponse(error);
 			}
@@ -133,25 +146,25 @@ SteamCommunity.prototype._updateJarFromCycleTLSResponse = async function (respon
 	}
 };
 
-SteamCommunity.prototype._getCookiesForSteamDomains = async function(uri) {
-    const steamDomains = [
-        'steamcommunity.com',
-        'store.steampowered.com',
-        'help.steampowered.com'
-    ];
+SteamCommunity.prototype._getCookiesForSteamDomains = async function (uri) {
+	const steamDomains = [
+		'steamcommunity.com',
+		'store.steampowered.com',
+		'help.steampowered.com'
+	];
 
-    let cookieObj = {};
+	let cookieObj = {};
 
-    for (const domain of steamDomains) {
-        const url = new URL(uri);
-        url.hostname = domain;
-        const cookies = await this._jar.getCookies(url.toString());
-        cookies.forEach(cookie => {
-            cookieObj[cookie.key] = cookie.value;
-        });
-    }
+	for (const domain of steamDomains) {
+		const url = new URL(uri);
+		url.hostname = domain;
+		const cookies = await this._jar.getCookies(url.toString());
+		cookies.forEach(cookie => {
+			cookieObj[cookie.key] = cookie.value;
+		});
+	}
 
-    return cookieObj;
+	return cookieObj;
 };
 
 SteamCommunity.prototype.httpRequestGet = function () {
